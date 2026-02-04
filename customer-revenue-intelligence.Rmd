@@ -1,0 +1,239 @@
+---
+title: "Customer Purchase Behavior & Revenue Analysis"
+author: "surekha"
+date: "2026-02-04"
+output: html_document
+---
+
+## Business Problem
+
+Retail leaders often struggle to identify the primary drivers of revenue and customer purchasing behavior despite having rich transactional data.
+
+The objective of this analysis is to transform raw retail data into actionable insights that support strategic business decision-making.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+
+library(tidyverse)
+library(lubridate)
+library(janitor)
+library(scales)
+library(here)
+library(kableExtra)
+options(scipen = 999)
+theme_set(theme_minimal())
+
+```
+
+
+
+## Executive Summary
+
+## Data Preparation
+
+```{r}
+retail <- read_csv(here("data_raw","online_retail.csv"), show_col_types = FALSE)
+```
+
+
+```{r}
+clean_retail <- retail %>%
+  clean_names() %>%
+  filter(!is.na(customer_id)) %>%
+  filter(quantity > 0, unit_price > 0) %>%
+  mutate(
+    revenue = quantity * unit_price,
+    month = floor_date(invoice_date, "month"),
+    year = year(invoice_date)
+  )
+
+
+```
+
+
+
+• This analysis evaluates $8.9M in transactional revenue to identify the behavioral and operational levers that most strongly influence business performance.
+• Average Order Value stands at **$480**, indicating strong basket sizes.  
+• Revenue demonstrates strong seasonality, peaking during the holiday period.  
+• Customer purchase frequency and basket size are the strongest drivers of revenue.
+
+These insights highlight clear opportunities for revenue optimization through customer retention, basket expansion strategies, and seasonal demand planning.
+
+
+```{r}
+
+executive_kpi <- clean_retail %>%
+  summarise(
+    Total_Revenue = sum(revenue),
+    Total_Orders = n_distinct(invoice_no),
+    Total_Customers = n_distinct(customer_id),
+    Avg_Order_Value = Total_Revenue / Total_Orders
+  )
+
+executive_kpi_fmt <- executive_kpi %>%
+  mutate(
+    Total_Revenue = dollar(Total_Revenue),
+    Avg_Order_Value = dollar(Avg_Order_Value)
+  )
+
+kable(executive_kpi_fmt)
+
+
+```
+### Key Takeaway
+The business generated substantial revenue across thousands of transactions, supported by a diverse customer base. Monitoring order value and customer purchasing behavior can help identify opportunities for revenue optimization.
+
+
+## Revenue Trend Analysis
+```{r}
+monthly_revenue <- clean_retail %>%
+  group_by(month) %>%
+  summarise(
+    revenue = sum(revenue),
+    orders = n_distinct(invoice_no)
+  )
+
+```
+
+```{r}
+ggplot(monthly_revenue, aes(x = month, y = revenue)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  geom_smooth(se = FALSE, linetype = "dashed") +
+  scale_y_continuous(labels = dollar) +
+  labs(
+    title = "Monthly Revenue Trend",
+    subtitle = "Revenue shows strong seasonal growth toward year-end",
+    x = "Month",
+    y = "Revenue"
+  )
+
+```
+
+### Business Insight
+
+Revenue demonstrates a clear upward trajectory approaching the holiday season, indicating strong seasonal purchasing behavior. 
+
+This suggests that the business should proactively increase inventory, optimize marketing campaigns, and ensure operational readiness ahead of peak demand periods to maximize revenue.
+
+## Revenue Drivers Analysis
+
+```{r}
+driver_data <- clean_retail %>%
+  group_by(invoice_no) %>%
+  summarise(
+    order_value = sum(revenue),
+    items_per_order = sum(quantity),
+    unique_products = n_distinct(stock_code)
+  )
+
+```
+
+```{r}
+ggplot(driver_data, aes(items_per_order, order_value)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1) +
+  scale_y_continuous(labels = dollar) +
+  labs(
+    title = "Order Size Strongly Influences Revenue",
+    subtitle = "Larger baskets consistently drive higher order value",
+    x = "Items Per Order",
+    y = "Order Value"
+  )
+
+```
+
+### Business Insight
+
+Order value increases significantly as the number of items per transaction rises, suggesting that basket expansion strategies such as product bundling, cross-selling, and volume discounts could materially improve revenue performance.
+
+## Customer Segmentation (RFM Analysis)
+
+```{r include=FALSE}
+analysis_date <- max(clean_retail$invoice_date)
+
+rfm <- clean_retail %>%
+  group_by(customer_id) %>%
+  summarise(
+    recency = as.numeric(analysis_date - max(invoice_date)),
+    frequency = n_distinct(invoice_no),
+    monetary = sum(revenue)
+  )
+pareto <- rfm %>%
+  arrange(desc(monetary)) %>%
+  mutate(
+    cumulative_revenue = cumsum(monetary),
+    revenue_pct = cumulative_revenue / sum(monetary),
+    customer_pct = row_number() / n()
+  )
+
+top_20_revenue <- pareto %>%
+  filter(customer_pct <= 0.20) %>%
+  summarise(revenue_share = max(revenue_pct)) %>%
+  pull(revenue_share)
+
+scales::percent(top_20_revenue, accuracy = 1)
+
+
+```
+
+```{r}
+ggplot(pareto, aes(customer_pct, revenue_pct)) +
+  geom_line(linewidth = 1.2) +
+  geom_abline(linetype = "dashed") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_continuous(labels = scales::percent) +
+  labs(
+    title = "Pareto Analysis: Revenue Concentration",
+    x = "Cumulative % of Customers",
+    y = "Cumulative % of Revenue"
+  )
+
+```
+
+The top 20% of customers contribute approximately 75% of total revenue, revealing a strong revenue concentration among high-value customers.
+
+This highlights the importance of customer retention strategies, loyalty programs, and personalized marketing to protect and grow the business’s most valuable revenue segment.Losing a small portion of these customers could materially impact overall revenue performance.
+
+```{r}
+ggplot(rfm, aes(frequency, monetary)) +
+  geom_point(alpha = 0.4) +
+  scale_y_continuous(labels = dollar) +
+  labs(
+    title = "High-Frequency Customers Drive Disproportionate Revenue",
+    x = "Purchase Frequency",
+    y = "Customer Spend"
+  )
+
+```
+
+### Business Insight
+
+A small segment of high-frequency customers contributes a disproportionately large share of total revenue. Prioritizing retention strategies for these customers could significantly enhance long-term profitability.
+
+### Regression model
+
+```{r}
+model <- lm(order_value ~ items_per_order + unique_products, data = driver_data)
+
+summary(model)
+
+```
+### Business Interpretation
+
+Each additional item added to an order increases order value by approximately $1.56, holding product variety constant. 
+
+This confirms that increasing basket size through cross-selling and bundled offers can directly and predictably improve revenue outcomes.
+
+## Strategic Recommendations
+
+Based on the analysis, the following actions are recommended:
+
+1. Implement cross-sell and bundle strategies to increase average basket size.
+2. Prioritize retention programs for high-frequency, high-spend customers.
+3. Strengthen inventory and marketing preparedness ahead of peak seasonal demand.
+4. Track order value and purchase frequency as core performance KPIs.
+
+These initiatives are expected to drive sustainable revenue growth while improving customer lifetime value.
+
