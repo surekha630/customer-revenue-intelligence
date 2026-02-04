@@ -1,7 +1,7 @@
+# Customer Revenue Intelligence Analysis
+
 ## 🔗 Live Project
  https://surekha630.github.io/customer-revenue-intelligence/
-
-# Customer Revenue Intelligence Analysis
 
 ## Project Overview
 This project analyzes transactional retail data to uncover the key drivers of revenue, customer purchasing behavior, and business performance.
